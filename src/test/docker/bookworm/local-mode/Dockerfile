@@ -64,7 +64,7 @@ RUN ldconfig
 RUN apt-get update && apt-get install -y libsystemd-dev
 
 WORKDIR /build
-RUN git clone https://github.com/garlick/flux-rest-server.git
+RUN git clone https://github.com/flux-framework/flux-rest-server.git
 
 WORKDIR /build/flux-rest-server
 RUN ./autogen.sh
