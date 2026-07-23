@@ -13,6 +13,7 @@
 
 
 import argparse
+import errno
 import json
 import os
 import pwd
@@ -22,11 +23,13 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import flux
+import flux.job
 import flux.util
 
 API_VERSION = "v1"
 SERVER_NAME = "flux-rest-server"
 _PREFIX = f"/api/{API_VERSION}"
+_MAX_BODY_SIZE = 1024 * 1024  # 1 MiB; sanity cap, not a considered limit
 
 _handle = None
 
@@ -71,6 +74,67 @@ ROUTES = {
 }
 
 
+def _jobs_submit(body):
+    """Submit a job from a structured JSON body (basic mode)."""
+    command = body.get("command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(c, str) for c in command)
+    ):
+        return 400, {"error": "'command' must be a non-empty list of strings"}
+
+    # Pass every other field straight through as a from_command() kwarg.
+    # None is filtered out so an unspecified/null field still falls back to
+    # Flux's own default rather than overriding it with None explicitly
+    # (e.g. num_tasks defaults to 1, not None). Anything JobspecV1 doesn't
+    # recognize raises TypeError below, caught the same as other jobspec
+    # errors -- no separate allowlist to keep in sync with from_command().
+    kwargs = {k: v for k, v in body.items() if k != "command" and v is not None}
+
+    # Without an explicit cwd/environment, from_command() would otherwise
+    # inherit this server process's own -- not the submitting user's home
+    # directory or a sane environment. Default both explicitly instead; an
+    # explicit "cwd"/"environment" in the request still overrides this.
+    pw = pwd.getpwuid(os.getuid())
+    kwargs.setdefault("cwd", pw.pw_dir)
+    kwargs.setdefault(
+        "environment",
+        {
+            "HOME": pw.pw_dir,
+            "USER": pw.pw_name,
+            "LOGNAME": pw.pw_name,
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "SHELL": pw.pw_shell,
+        },
+    )
+
+    try:
+        jobspec = flux.job.JobspecV1.from_command(command, **kwargs)
+    except (ValueError, TypeError) as err:
+        return 400, {"error": f"invalid jobspec: {err}"}
+
+    try:
+        jobid = flux.job.submit(_flux(), jobspec)
+    except OSError as err:
+        # flux.job.submit() raises plain OSError for both "flux unreachable"
+        # and "request rejected as invalid" (e.g. bad queue), distinguished
+        # only by errno. EINVAL -> 400; anything else re-raises for
+        # do_POST's existing OSError -> 503 handling.
+        if err.errno == errno.EINVAL:
+            return 400, {"error": str(err)}
+        raise
+    except (RuntimeError, ValueError) as err:
+        return 400, {"error": str(err)}
+
+    return 201, {"id": str(jobid)}
+
+
+POST_ROUTES = {
+    f"{_PREFIX}/jobs/submit": _jobs_submit,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = SERVER_NAME
     verbose = False
@@ -85,7 +149,46 @@ class Handler(BaseHTTPRequestHandler):
             status, body = route()
         except OSError as err:                    # Flux not reachable
             status, body = 503, {"error": "flux unavailable", "detail": str(err)}
+        except Exception as err:
+            # Unanticipated bug: fail safely with a clean 500 instead of
+            # letting BaseHTTPRequestHandler turn it into a raw traceback
+            # on the wire or a dropped connection.
+            self.log_error("unhandled exception in %s: %s", path, err)
+            status, body = 500, {"error": "internal error"}
         self._send(status, body)
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        route = POST_ROUTES.get(path)
+        if route is None:
+            self._send(404, {"error": "not found", "path": path})
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if length > _MAX_BODY_SIZE:
+                self._send(400, {"error": "request body too large"})
+                return
+            raw = self.rfile.read(length) if length else b"{}"
+            body = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            self._send(400, {"error": "malformed request"})
+            return
+        if not isinstance(body, dict):
+            self._send(400, {"error": "request body must be a JSON object"})
+            return
+
+        try:
+            status, resp = route(body)
+        except OSError as err:  # Flux not reachable
+            status, resp = 503, {"error": "flux unavailable", "detail": str(err)}
+        except Exception as err:
+            # Unanticipated bug: fail safely with a clean 500 instead of
+            # letting BaseHTTPRequestHandler turn it into a raw traceback
+            # on the wire or a dropped connection.
+            self.log_error("unhandled exception in %s: %s", path, err)
+            status, resp = 500, {"error": "internal error"}
+        self._send(status, resp)
 
     def _send(self, status, body):
         data = (json.dumps(body) + "\n").encode()
