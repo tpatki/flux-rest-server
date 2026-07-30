@@ -147,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             status, body = route()
-        except OSError as err:                    # Flux not reachable
+        except OSError as err:  # Flux not reachable
             status, body = 503, {"error": "flux unavailable", "detail": str(err)}
         except Exception as err:
             # Unanticipated bug: fail safely with a clean 500 instead of
@@ -207,9 +207,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _log(self, stream, format, *args):
         # Flush: under `flux exec --bg` the stream is a block-buffered pipe.
-        stream.write("%s - - [%s] %s\n" % (self.address_string(),
-                                           self.log_date_time_string(),
-                                           format % args))
+        stream.write(
+            "%s - - [%s] %s\n"
+            % (self.address_string(), self.log_date_time_string(), format % args)
+        )
         stream.flush()
 
     def log_message(self, format, *args):
@@ -328,27 +329,42 @@ def _fsd(value):
 
 def main():
     parser = argparse.ArgumentParser(prog="flux-rest-server")
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="bind address when using --port (default 127.0.0.1)")
-    parser.add_argument("--port", type=int,
-                        help="use TCP socket on PORT instead of default unix socket")
-    parser.add_argument("--socket", metavar="PATH",
-                        help="listen on unix domain socket at PATH (default: rundir/rest)")
-    parser.add_argument("--allow-user", metavar="USER",
-                        help="only permit this user to connect, verified via "
-                             "SO_PEERCRED (default: the invoking user)")
-    parser.add_argument("--idle-timeout", type=_fsd, metavar="FSD",
-                        help="exit after this idle duration with no connection, "
-                             "e.g. 30s, 5m, 1h (default: run forever); under "
-                             "socket activation systemd re-activates on the next "
-                             "connection")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="log each request to stderr")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind address when using --port (default 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port", type=int, help="use TCP socket on PORT instead of default unix socket"
+    )
+    parser.add_argument(
+        "--socket",
+        metavar="PATH",
+        help="listen on unix domain socket at PATH (default: rundir/rest)",
+    )
+    parser.add_argument(
+        "--allow-user",
+        metavar="USER",
+        help="only permit this user to connect, verified via "
+        "SO_PEERCRED (default: the invoking user)",
+    )
+    parser.add_argument(
+        "--idle-timeout",
+        type=_fsd,
+        metavar="FSD",
+        help="exit after this idle duration with no connection, "
+        "e.g. 30s, 5m, 1h (default: run forever); under "
+        "socket activation systemd re-activates on the next "
+        "connection",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="log each request to stderr"
+    )
     args = parser.parse_args()
 
     if args.idle_timeout is not None:
         if args.idle_timeout == float("inf"):
-            args.idle_timeout = None       # "infinity": never time out
+            args.idle_timeout = None  # "infinity": never time out
         elif args.idle_timeout <= 0:
             parser.error("--idle-timeout must be a positive duration")
 
@@ -375,8 +391,11 @@ def main():
             # connect. For cross-user access use socket activation, where systemd
             # creates a group-accessible socket.
             if allowed_uid != os.getuid():
-                print("error: --allow-user requires socket activation; a "
-                      "self-created socket is owner-only", file=sys.stderr)
+                print(
+                    "error: --allow-user requires socket activation; a "
+                    "self-created socket is owner-only",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
             # Default: unix socket in flux rundir
             if args.socket:
@@ -388,7 +407,10 @@ def main():
                     socket_path = os.path.join(rundir, "rest")
                 except OSError as err:
                     print(f"error: cannot get flux rundir: {err}", file=sys.stderr)
-                    print("hint: use --port for TCP mode outside a flux instance", file=sys.stderr)
+                    print(
+                        "hint: use --port for TCP mode outside a flux instance",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
             srv = server_on_unix_socket(socket_path)
     except OSError as err:
@@ -411,8 +433,11 @@ def main():
     if srv.address_family == socket.AF_UNIX:
         srv.allowed_peer_uid = allowed_uid
     elif args.allow_user:
-        print("warning: --allow-user has no effect on a TCP socket "
-              "(SO_PEERCRED unavailable)", file=sys.stderr)
+        print(
+            "warning: --allow-user has no effect on a TCP socket "
+            "(SO_PEERCRED unavailable)",
+            file=sys.stderr,
+        )
 
     srv.idle_timeout = args.idle_timeout
 
