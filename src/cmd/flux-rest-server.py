@@ -183,6 +183,32 @@ JOB_ROUTES = {
 }
 
 
+def _jobs_cancel(jobid, body):
+    """POST /api/v1/jobs/<id>/cancel: request cancellation of a job."""
+    h = _flux()
+    reason = body.get("reason")
+    try:
+        flux.job.cancel(h, jobid, reason=reason)
+    except FileNotFoundError as err:
+        # flux.job.cancel() raises this identical exception for a
+        # nonexistent job, an already-inactive job, and a genuinely
+        # unreachable broker. Disambiguate the broker case the same way
+        # _jobs_state does: if it's really down, this raises too, and
+        # propagates to do_POST's OSError -> 503 handling. Otherwise, the
+        # two job-related cases differ in message text.
+        h.attr_get("rank")
+        if "inactive" in str(err):
+            return 409, {"error": f"job {jobid} is already inactive, cannot cancel"}
+        return 404, {"error": f"no such job: {jobid}"}
+
+    return 202, {"id": str(jobid), "status": "cancel requested"}
+
+
+POST_JOB_ROUTES = {
+    "cancel": _jobs_cancel,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = SERVER_NAME
     verbose = False
@@ -216,11 +242,19 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, body)
 
     def do_POST(self):
-        path = self.path.split("?", 1)[0]
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
         route = POST_ROUTES.get(path)
+        jobid = None
         if route is None:
-            self._send(404, {"error": "not found", "path": path})
-            return
+            try:
+                jobid, suffix = _parse_job_path(path)
+            except ValueError as err:
+                self._send(400, {"error": str(err)})
+                return
+            route = POST_JOB_ROUTES.get(suffix) if jobid is not None else None
+            if route is None:
+                self._send(404, {"error": "not found", "path": path})
+                return
 
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -237,7 +271,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            status, resp = route(body)
+            status, resp = route(jobid, body) if jobid is not None else route(body)
         except OSError as err:  # Flux not reachable
             status, resp = 503, {"error": "flux unavailable", "detail": str(err)}
         except Exception as err:
