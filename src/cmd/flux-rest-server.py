@@ -20,6 +20,7 @@ import pwd
 import socket
 import struct
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import flux
@@ -135,18 +136,75 @@ POST_ROUTES = {
 }
 
 
+def _parse_job_path(path):
+    """Parse /jobs/<id> or /jobs/<id>/<suffix> from a request path.
+
+    Returns (jobid, suffix) -- suffix is None for a bare /jobs/<id>.
+    Returns (None, None) if path doesn't match this shape at all.
+    Raises ValueError if the id portion isn't a valid Flux jobid.
+    """
+    prefix = f"{_PREFIX}/jobs/"
+    if not path.startswith(prefix):
+        return None, None
+    parts = path[len(prefix) :].split("/")
+    if len(parts) == 1:
+        jobid_str, suffix = parts[0], None
+    elif len(parts) == 2:
+        jobid_str, suffix = parts
+    else:
+        return None, None
+    return flux.job.JobID(jobid_str), suffix  # raises ValueError if malformed
+
+
+def _jobs_state(jobid):
+    """GET /api/v1/jobs/<id>/state: cheap state-only poll."""
+    h = _flux()
+    try:
+        info = flux.job.list.job_list_id(
+            h, jobid, attrs=["state", "result"]
+        ).get_jobinfo()
+    except FileNotFoundError:
+        # job_list_id() raises this identical exception for both "no such
+        # job" and "broker unreachable". Disambiguate with a cheap,
+        # definitely-broker-dependent call: if the broker is really down,
+        # this raises too, and propagates to do_GET's OSError -> 503
+        # handling instead of the 404 below.
+        h.attr_get("rank")
+        return 404, {"error": f"no such job: {jobid}"}
+
+    body = {"id": str(jobid), "state": info.state}
+    if info.state == "INACTIVE":
+        body["result"] = info.result
+    return 200, body
+
+
+JOB_ROUTES = {
+    "state": _jobs_state,
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = SERVER_NAME
     verbose = False
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
         route = ROUTES.get(path)
-        if route is None:
-            self._send(404, {"error": "not found", "path": path})
-            return
+        if route is not None:
+            args = ()
+        else:
+            try:
+                jobid, suffix = _parse_job_path(path)
+            except ValueError as err:
+                self._send(400, {"error": str(err)})
+                return
+            route = JOB_ROUTES.get(suffix) if jobid is not None else None
+            if route is None:
+                self._send(404, {"error": "not found", "path": path})
+                return
+            args = (jobid,)
         try:
-            status, body = route()
+            status, body = route(*args)
         except OSError as err:  # Flux not reachable
             status, body = 503, {"error": "flux unavailable", "detail": str(err)}
         except Exception as err:
