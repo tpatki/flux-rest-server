@@ -11,7 +11,6 @@
 
 """flux-rest-server: a minimal, stdlib-only HTTP front-end for Flux."""
 
-
 import argparse
 import errno
 import json
