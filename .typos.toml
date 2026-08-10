@@ -1,0 +1,5 @@
+# do not spell-check vendored code
+[files]
+extend-exclude = [
+  "t/sharness.sh",
+]
