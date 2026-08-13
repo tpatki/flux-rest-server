@@ -1,0 +1,40 @@
+on: [pull_request, push]
+name: ci
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  check-pr:
+    name: validate commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: git fetch origin main
+    - uses: flux-framework/pr-validator@master
+
+  spelling:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Check Spelling
+      uses: crate-ci/typos@v1.36.0
+
+  python-format:
+    name: code formatting
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - uses: actions/checkout@v5
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - name: install linting and formatting deps
+      run: pip install -r scripts/requirements-dev.txt
+    - name: format and linting checks
+      run: pre-commit run --all-files --show-diff-on-failure

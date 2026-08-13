@@ -84,12 +84,8 @@ class EnsureHandler(BaseHTTPRequestHandler):
 
             if result.returncode != 0:
                 stderr = result.stderr.decode("utf-8", errors="replace")
-                self.log_error(
-                    f"systemctl start {unit_name} failed: {stderr}"
-                )
-                self.send_error(
-                    500, f"Failed to start {unit_name}: {stderr}"
-                )
+                self.log_error(f"systemctl start {unit_name} failed: {stderr}")
+                self.send_error(500, f"Failed to start {unit_name}: {stderr}")
                 return
 
             # Success - return 200 so nginx proceeds with the proxied request
