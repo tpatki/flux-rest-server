@@ -126,11 +126,20 @@ def _jobs_submit(body):
     except (RuntimeError, ValueError) as err:
         return 400, {"error": str(err)}
 
-    return 201, {"id": str(jobid)}
+    # 201 Created with a Location pointing at the new job resource, per the
+    # usual convention for POST-to-collection. The id is echoed in the body
+    # too for convenience; the two use the same representation.
+    #
+    # Use the F58 "plain" encoding (ASCII "f" prefix) rather than str(jobid),
+    # whose default fancy prefix is U+0192 -- non-ASCII, so it would have to
+    # be percent-encoded in the Location URL. JobID parses every encoding
+    # (plain, fancy, decimal, ...) back to the same id, so input stays lenient.
+    fluid = jobid.f58plain
+    return 201, {"id": fluid}, {"Location": f"{_PREFIX}/jobs/{fluid}"}
 
 
 POST_ROUTES = {
-    f"{_PREFIX}/jobs/submit": _jobs_submit,
+    f"{_PREFIX}/jobs": _jobs_submit,
 }
 
 
@@ -177,8 +186,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "request body must be a JSON object"})
             return
 
+        headers = None
         try:
-            status, resp = route(body)
+            result = route(body)
+            # A route returns (status, body) or (status, body, headers).
+            status, resp = result[0], result[1]
+            headers = result[2] if len(result) > 2 else None
         except OSError as err:  # Flux not reachable
             status, resp = 503, {"error": "flux unavailable", "detail": str(err)}
         except Exception as err:
@@ -187,14 +200,16 @@ class Handler(BaseHTTPRequestHandler):
             # on the wire or a dropped connection.
             self.log_error("unhandled exception in %s: %s", path, err)
             status, resp = 500, {"error": "internal error"}
-        self._send(status, resp)
+        self._send(status, resp, headers)
 
-    def _send(self, status, body):
+    def _send(self, status, body, headers=None):
         data = (json.dumps(body) + "\n").encode()
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(data)
         except BrokenPipeError:
