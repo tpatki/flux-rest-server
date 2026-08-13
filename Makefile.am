@@ -34,6 +34,7 @@ docexample_DATA = \
 
 EXTRA_DIST = \
 	config/tap-driver.sh \
+	scripts/openapi-check.py \
 	README.md \
 	LICENSE \
 	NOTICE.LLNS \
