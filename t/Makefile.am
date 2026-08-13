@@ -13,7 +13,8 @@ TESTS = \
 	t0000-sharness.t \
 	t1000-basic.t \
 	t1001-security.t \
-	t1002-job-submit.t
+	t1002-job-submit.t \
+	t1003-openapi.t
 
 EXTRA_DIST = \
 	$(TESTS) \
