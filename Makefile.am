@@ -24,6 +24,8 @@ clean-local:
 polkitdir = $(sysconfdir)/polkit-1/rules.d
 polkit_DATA = polkit/50-flux-rest-server.rules
 
+dist_doc_DATA = spec/v1/openapi.yaml
+
 docexampledir = $(docdir)/examples
 docexample_DATA = \
 	nginx/flux-rest-server.conf.example \

@@ -1,0 +1,145 @@
+openapi: 3.1.0
+
+# flux-rest-server — OpenAPI specification for the v1 REST API.
+#
+# This is the machine-readable contract for the endpoints the server
+# actually implements. It is meant to be kept in sync with the code as new
+# operations land: it should describe what exists, not what is planned.
+# Aspirational endpoints and open design questions live in REST_API.md.
+#
+# The t/ testsuite validates this file, so a change that breaks the spec is
+# caught by `make check`.
+
+info:
+  title: Flux REST Server
+  version: "1.0.0-draft"
+  description: >
+    A per-user HTTP front-end for a Flux instance, running unprivileged as the
+    authenticated user; all operations act with that user's identity. The v1
+    surface is still evolving and not yet frozen.
+  license:
+    name: LGPL-3.0
+
+servers:
+  - url: /api/v1
+    description: All paths below are relative to this prefix.
+
+paths:
+  /:
+    get:
+      operationId: getInstanceInfo
+      summary: Instance info
+      description: Identity and version of the Flux instance this server fronts.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstanceInfo" }
+        "503": { $ref: "#/components/responses/FluxUnavailable" }
+
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness
+      description: Does not contact Flux; always answerable if the server is up.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+
+  /jobs:
+    post:
+      operationId: submitJob
+      summary: Submit a job
+      description: >
+        Create a job in the jobs collection. Basic-mode submission only: a
+        `command` plus optional resource/environment fields (see
+        JobSubmission).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobSubmission" }
+      responses:
+        "201":
+          description: Job created
+          headers:
+            Location:
+              description: URI of the newly created job resource.
+              schema: { type: string, example: "/api/v1/jobs/1234567890" }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { $ref: "#/components/schemas/JobId" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/FluxUnavailable" }
+
+components:
+  responses:
+    BadRequest:
+      description: Malformed request or invalid jobspec.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    FluxUnavailable:
+      description: The Flux broker is unreachable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    JobId:
+      type: string
+      description: >-
+        Flux job identifier. Emitted as the ASCII F58 "plain" form (leading
+        "f") so it needs no escaping in URLs; any encoding Flux accepts
+        (plain, fancy F58, decimal, hex) is accepted on input.
+      example: "f2t6V2H"
+
+    InstanceInfo:
+      type: object
+      properties:
+        name: { type: string, example: flux-rest-server }
+        user: { type: string, description: The user this server runs as. }
+        broker_version: { type: string }
+        rank: { type: integer }
+        size: { type: integer }
+
+    JobSubmission:
+      type: object
+      required: [command]
+      description: >
+        Basic-mode submission. `command` is required; every other field is
+        passed through to JobspecV1.from_command() as a kwarg, so an
+        unrecognized field is rejected with 400 rather than ignored.
+      properties:
+        command:
+          type: array
+          items: { type: string }
+          minItems: 1
+          example: ["sleep", "60"]
+        num_tasks: { type: integer, minimum: 1 }
+        num_nodes: { type: integer, minimum: 1 }
+        cores_per_task: { type: integer, minimum: 1 }
+        cwd: { type: string }
+        environment:
+          type: object
+          additionalProperties: { type: string }
+      additionalProperties: true
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detail: { type: string }
+        path: { type: string }
