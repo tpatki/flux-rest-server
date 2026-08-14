@@ -129,6 +129,15 @@ test_expect_success 'malformed Content-Length returns 400, not a crash' '
 	test "$(cat cl.code)" = "400"
 '
 
+test_expect_success 'negative Content-Length returns 400, not a hang' '
+	$CURL -s -o cln.out -w "%{http_code}" -X POST \
+	    http://localhost/api/v1/jobs \
+	    -H "Content-Type: application/json" \
+	    -H "Content-Length: -1" \
+	    -d "{\"command\": [\"true\"]}" >cln.code &&
+	test "$(cat cln.code)" = "400"
+'
+
 test_expect_success 'malformed input returns 400' '
 	$CURL -s -o r1.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" -d "{}" >r1.code &&

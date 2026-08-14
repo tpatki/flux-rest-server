@@ -174,6 +174,11 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", 0))
+            if length < 0:
+                # A negative length would make rfile.read(length) read until
+                # EOF, hanging on a keep-alive connection. Reject it instead.
+                self._send(400, {"error": "malformed request"})
+                return
             if length > _MAX_BODY_SIZE:
                 self._send(400, {"error": "request body too large"})
                 return
