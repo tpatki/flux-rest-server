@@ -148,19 +148,14 @@ OnDemand.
 
 ## API endpoints
 
-Under `/api/v1/`. Implemented today (read-only, `application/json`):
+Under `/api/v1/`. Implemented today (`application/json`):
 
 - `GET /` — instance info: `name`, `user` (the authenticated user the server
   runs as), `broker_version`, `rank`, `size`.
 - `GET /health` — liveness; does not touch Flux.
+- `POST /jobs` — submit a job (basic mode: a `command` plus optional
+  resource/environment fields). Returns `201` with the new job id in the body
+  and a `Location` header pointing at the created resource.
 
-Future: translation of all stable Flux RPC interfaces to REST.
-
-## Implementation phases
-
-1. **Per-user service** — standalone HTTP→RPC over `local://`, no privileged
-   parts. (Implemented.)
-2. **Per-user activation** — systemd units + polkit rule + `_ensure` helper +
-   nginx. (Implemented.)
-3. **Instance navigation** — resolve guest job URI, establish connection.
-4. **API translation and documentation** — big design area here, completely TBD.
+The authoritative API contract is [`openapi.yaml`](spec/v1/openapi.yaml), validated
+by the testsuite.

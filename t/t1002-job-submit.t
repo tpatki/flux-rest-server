@@ -1,6 +1,6 @@
 #!/bin/sh
 
-test_description='Test POST /api/v1/jobs/submit (basic submit)'
+test_description='Test POST /api/v1/jobs (basic submit)'
 
 . $(dirname $0)/sharness.sh
 
@@ -30,14 +30,19 @@ test_expect_success 'start flux-rest-server' '
 '
 
 test_expect_success 'job id is returned as a string, not a JSON number' '
-	$CURL -s -o idtype.out -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o idtype.out -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" -d "{\"command\": [\"true\"]}" &&
 	jq -e ".id | type == \"string\"" idtype.out
 '
 
+test_expect_success 'job id is the ASCII F58 plain form (no fancy prefix)' '
+	id=$(jq -er ".id" idtype.out) &&
+	echo "$id" | grep -qx "f[1-9A-HJ-NP-Za-km-z]*"
+'
+
 test_expect_success 'cwd defaults to the submitting user home directory' '
 	real_home=$(python3 -c "import pwd, os; print(pwd.getpwuid(os.getuid()).pw_dir)") &&
-	$CURL -s -o cwd.out -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o cwd.out -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"pwd\"]}" &&
 	id=$(jq -r ".id" cwd.out) &&
@@ -46,7 +51,7 @@ test_expect_success 'cwd defaults to the submitting user home directory' '
 '
 
 test_expect_success 'environment defaults to a small set, not the server env' '
-	$CURL -s -o env1.out -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o env1.out -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"env\"]}" &&
 	id=$(jq -r ".id" env1.out) &&
@@ -57,7 +62,7 @@ test_expect_success 'environment defaults to a small set, not the server env' '
 '
 
 test_expect_success 'explicit cwd/environment override the defaults' '
-	$CURL -s -o override.out -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o override.out -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"sh\", \"-c\", \"pwd; echo CUSTOM=\$CUSTOM_VAR\"], \"cwd\": \"/tmp\", \"environment\": {\"CUSTOM_VAR\": \"myvalue\"}}" &&
 	id=$(jq -r ".id" override.out) &&
@@ -67,8 +72,8 @@ test_expect_success 'explicit cwd/environment override the defaults' '
 '
 
 test_expect_success 'basic submit returns 201, and the job actually runs' '
-	$CURL -s -o submit.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	$CURL -s -o submit.out -D submit.hdr -w "%{http_code}" -X POST \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"true\"]}" >submit.code &&
 	test "$(cat submit.code)" = "201" &&
@@ -76,9 +81,15 @@ test_expect_success 'basic submit returns 201, and the job actually runs' '
 	flux job attach $id
 '
 
+test_expect_success 'the 201 Location header points at the created job' '
+	grep -i "^Location:" submit.hdr >loc.out &&
+	id=$(jq -er ".id" submit.out) &&
+	grep -iq "^Location:[ ]*/api/v1/jobs/$id" submit.hdr
+'
+
 test_expect_success 'extra fields (num_tasks, name) are honored' '
 	$CURL -s -o submit2.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"true\"], \"num_tasks\": 2, \"name\": \"t1002test\"}" \
 	    >submit2.code &&
@@ -90,7 +101,7 @@ test_expect_success 'extra fields (num_tasks, name) are honored' '
 
 test_expect_success 'num_nodes is honored' '
 	$CURL -s -o submit3.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"true\"], \"num_nodes\": 1}" \
 	    >submit3.code &&
@@ -103,7 +114,7 @@ test_expect_success 'num_nodes is honored' '
 
 test_expect_success 'unknown field returns 400 instead of being ignored' '
 	$CURL -s -o unknownfield.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"true\"], \"num_gpus\": 1}" >unknownfield.code &&
 	test "$(cat unknownfield.code)" = "400"
@@ -111,21 +122,30 @@ test_expect_success 'unknown field returns 400 instead of being ignored' '
 
 test_expect_success 'malformed Content-Length returns 400, not a crash' '
 	$CURL -s -o cl.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -H "Content-Length: not-a-number" \
 	    -d "{\"command\": [\"true\"]}" >cl.code &&
 	test "$(cat cl.code)" = "400"
 '
 
+test_expect_success 'negative Content-Length returns 400, not a hang' '
+	$CURL -s -o cln.out -w "%{http_code}" -X POST \
+	    http://localhost/api/v1/jobs \
+	    -H "Content-Type: application/json" \
+	    -H "Content-Length: -1" \
+	    -d "{\"command\": [\"true\"]}" >cln.code &&
+	test "$(cat cln.code)" = "400"
+'
+
 test_expect_success 'malformed input returns 400' '
-	$CURL -s -o r1.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o r1.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" -d "{}" >r1.code &&
 	test "$(cat r1.code)" = "400" &&
-	$CURL -s -o r2.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o r2.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" -d "{\"command\": \"true\"}" >r2.code &&
 	test "$(cat r2.code)" = "400" &&
-	$CURL -s -o r3.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs/submit \
+	$CURL -s -o r3.out -w "%{http_code}" -X POST http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" -d "not json" >r3.code &&
 	test "$(cat r3.code)" = "400"
 '
@@ -137,7 +157,7 @@ test_expect_success 'malformed input returns 400' '
 # developing this endpoint.
 test_expect_success 'invalid queue name returns 400, not 503' '
 	$CURL -s -o badqueue.out -w "%{http_code}" -X POST \
-	    http://localhost/api/v1/jobs/submit \
+	    http://localhost/api/v1/jobs \
 	    -H "Content-Type: application/json" \
 	    -d "{\"command\": [\"true\"], \"queue\": \"nonexistent-queue-xyz\"}" \
 	    >badqueue.code &&

@@ -10,5 +10,7 @@ apt install \
   python3-all \
   python3-setuptools \
   flux-core \
-  python3-pytest
+  python3-pytest \
+  python3-yaml \
+  python3-openapi-spec-validator
 
